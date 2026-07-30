@@ -71,9 +71,10 @@ unsigned long lastDistSend   = 0;
 unsigned long lastNavPrint   = 0;
 unsigned long lastColorCheck = 0;
 
-// Asynchronous Victim Buffer State
+// Asynchronous Victim Buffer & Stop State
 char pendingVictim  = ' ';   // 'H', 'S', 'U', or ' '
 bool mazeStarted    = false;
+volatile bool stopRequested = false;
 unsigned long blueCooldownUntil = 0;
 
 // Function Prototypes
@@ -147,6 +148,10 @@ void setup() {
 void loop() {
   // 1. Check for incoming Pi commands (NON-BLOCKING)
   checkPiCommand();
+  if (stopRequested) {
+    waitForStart();
+    return;
+  }
 
   // 2. Update MPU6500 Yaw Angle continuously
   updateYaw();
@@ -339,6 +344,8 @@ void turnDegrees(float targetAngle) {
   stopMotors();
   delay(100);
 
+  if (stopRequested) return;
+
   // Reset yaw value to 0.0 and turn relative to 0
   yaw = 0.0;
   previousTime = micros();
@@ -353,6 +360,14 @@ void turnDegrees(float targetAngle) {
   unsigned long lastTurnLog = 0;
 
   while (millis() - turnStart < timeout) {
+    // Check for Pi STOP command during turn
+    checkPiCommand();
+    if (stopRequested) {
+      Serial.println(F("🛑 [TURN ABORTED] STOP Command Received!"));
+      stopMotors();
+      return;
+    }
+
     updateYaw();
 
     // Check if target degree reached
@@ -501,10 +516,11 @@ void checkPiCommand() {
 
     if (cmd.indexOf("STOP") != -1 || cmd.indexOf("RESET") != -1) {
       stopMotors();
+      stopRequested = true;
+      mazeStarted = false;
       pendingVictim = ' ';
       Serial.println(F("STOP_ACK"));
       beep(100); delay(50); beep(100);
-      waitForStart();
       return;
     }
 
@@ -527,6 +543,7 @@ void checkPiCommand() {
 void waitForStart() {
   stopMotors();
   mazeStarted = false;
+  stopRequested = false;
   pendingVictim = ' ';
   Serial.println(F("READY"));
   Serial.println(F("Waiting for Pi START or 'T' for Diagnostics..."));
@@ -542,6 +559,7 @@ void waitForStart() {
         Serial.println(F("READY"));
       } else if (cmd.indexOf("START") != -1) {
         mazeStarted = true;
+        stopRequested = false;
         yaw = 0.0;
         previousTime = micros();
         Serial.println(F("START received — maze running!"));
