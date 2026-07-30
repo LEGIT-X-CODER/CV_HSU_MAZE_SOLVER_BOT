@@ -1,0 +1,8 @@
+# Git ignore for Rescue Maze Bot repository
+.git_bin/
+mingit.zip
+download_git.py
+__pycache__/
+*.pyc
+.DS_Store
+*.log
