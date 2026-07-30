@@ -337,7 +337,7 @@ void updateYaw() {
 // =============================================================
 void turnDegrees(float targetAngle) {
   stopMotors();
-  delay(50);
+  delay(100);
 
   // Reset yaw value to 0.0 and turn relative to 0
   yaw = 0.0;
@@ -346,22 +346,38 @@ void turnDegrees(float targetAngle) {
   Serial.print(F("🔄 [TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
 
   unsigned long turnStart = millis();
-  unsigned long timeout = 2500; // 2.5s safety limit
+  unsigned long timeout   = 800; // 800ms MAX safety limit (prevents endless spinning!)
+  int turnPwm             = 190; // Smooth, controlled turn speed (0-255)
 
-  float targetMag = abs(targetAngle) - 3.5; // 3.5° lead-in for inertia stop
+  float targetMag = abs(targetAngle) - 5.0; // 5° lead-in for inertia stop
+  unsigned long lastTurnLog = 0;
 
-  while (abs(yaw) < targetMag && (millis() - turnStart < timeout)) {
+  while (millis() - turnStart < timeout) {
     updateYaw();
 
+    // Check if target degree reached
+    if (abs(yaw) >= targetMag) {
+      Serial.print(F("🎯 [TURN TARGET REACHED] Yaw = ")); Serial.print(yaw, 1); Serial.println(F("°"));
+      break;
+    }
+
+    // Apply motor spin
     if (targetAngle > 0) {
       // Spin Left (+90°)
-      analogWrite(LEFT_FWD, 0);           analogWrite(LEFT_REV, TURN_SPEED);
-      analogWrite(RIGHT_FWD, TURN_SPEED);  analogWrite(RIGHT_REV, 0);
+      analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, turnPwm);
+      analogWrite(RIGHT_FWD, turnPwm);  analogWrite(RIGHT_REV, 0);
     } else {
       // Spin Right (-90°)
-      analogWrite(LEFT_FWD, TURN_SPEED); analogWrite(LEFT_REV, 0);
-      analogWrite(RIGHT_FWD, 0);          analogWrite(RIGHT_REV, TURN_SPEED);
+      analogWrite(LEFT_FWD, turnPwm);   analogWrite(LEFT_REV, 0);
+      analogWrite(RIGHT_FWD, 0);        analogWrite(RIGHT_REV, turnPwm);
     }
+
+    // Print live turn progress every 100ms
+    if (millis() - lastTurnLog >= 100) {
+      Serial.print(F("  [TURNING] Yaw: ")); Serial.print(yaw, 1); Serial.println(F("°"));
+      lastTurnLog = millis();
+    }
+
     delay(5);
   }
 
@@ -370,7 +386,7 @@ void turnDegrees(float targetAngle) {
   // Reset yaw to 0.0 for straight line driving
   yaw = 0.0;
   previousTime = micros();
-  Serial.print(F("✅ [TURN] Complete! Reset Yaw to 0.0°\n"));
+  Serial.print(F("✅ [TURN COMPLETE] Stop Yaw = 0.0°\n"));
 }
 
 
