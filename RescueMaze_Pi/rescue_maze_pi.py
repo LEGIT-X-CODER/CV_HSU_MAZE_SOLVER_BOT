@@ -236,26 +236,28 @@ class ArduinoLink:
 # ═══════════════════════════════════════════════════════════════
 #  OLED SCREEN DISPLAY WORKER
 # ═══════════════════════════════════════════════════════════════
-def update_oled(state_text, letter, conf, dist_cm):
+def update_oled(state_text, letter, conf, dist_cm, last_victim="NONE"):
     if not OLED_OK or oled_dev is None:
         return
     try:
         with canvas(oled_dev) as draw:
             # Header line
-            draw.rectangle((0, 0, 128, 14), fill="white")
-            draw.text((4, 1), f"RCJR:{state_text}", fill="black")
+            draw.rectangle((0, 0, 128, 13), fill="white")
+            draw.text((4, 0), f"RCJR: {state_text}", fill="black")
 
-            # Main Victim Detection Line
+            # Detection Line
             if letter != "NONE":
-                draw.text((4, 20), f"VICTIM: {letter}", fill="white")
-                draw.text((4, 34), f"Conf:   {conf:.0f}%", fill="white")
+                draw.text((4, 16), f"DETECT: {letter} ({conf:.0f}%)", fill="white")
             else:
-                draw.text((4, 20), "Scanning H/S/U...", fill="white")
-                draw.text((4, 34), "No victim found", fill="white")
+                draw.text((4, 16), "SCANNING H/S/U...", fill="white")
+
+            # Last Victim Line
+            draw.text((4, 30), f"LAST VICTIM: {last_victim}", fill="white")
 
             # Bottom Distance Line
-            draw.line((0, 50, 128, 50), fill="white")
-            draw.text((4, 52), f"Front Dist: {dist_cm} cm", fill="white")
+            draw.line((0, 47, 128, 47), fill="white")
+            dist_str = f"{dist_cm} cm" if dist_cm < 900 else "-- cm"
+            draw.text((4, 50), f"FRONT DIST: {dist_str}", fill="white")
     except Exception:
         pass
 
@@ -326,16 +328,16 @@ def main():
     vision = RCJRVisionEngine()
 
     # Initial OLED State
-    update_oled("READY", "NONE", 0, 999)
+    update_oled("READY", "NONE", 0, 999, "NONE")
 
     state_dict = {'running': False}
     threading.Thread(target=terminal_cli_thread, args=(arduino, state_dict), daemon=True).start()
 
-    maze_running = False
     last_touch_state = False
     last_send_time = 0
+    last_victim = "NONE"
 
-    print("\n[READY] Touch TTP223 Sensor to START / STOP maze run...")
+    print("\n[READY] Touch TTP223 Sensor OR Type 'START' / 'T' in SSH terminal...")
 
     try:
         while True:
@@ -349,17 +351,18 @@ def main():
                 if state_dict['running']:
                     print("\n[TOUCH EVENT] TTP223 Pressed ──► STARTING MAZE!")
                     arduino.send("START")
-                    update_oled("RUNNING", "NONE", 0, 999)
+                    update_oled("RUNNING", "NONE", 0, arduino.get_dist(), last_victim)
                 else:
                     print("\n[TOUCH EVENT] TTP223 Pressed ──► STOPPING MAZE!")
                     arduino.send("STOP")
-                    update_oled("STOPPED", "NONE", 0, 999)
+                    update_oled("STOPPED", "NONE", 0, arduino.get_dist(), last_victim)
                 time.sleep(0.3)  # debounce
 
             last_touch_state = touched
 
             if not state_dict['running']:
-                update_oled("TOUCH START", "NONE", 0, 999)
+                dist_cm = arduino.get_dist()
+                update_oled("TOUCH START", "NONE", 0, dist_cm, last_victim)
                 time.sleep(0.1)
                 continue
 
@@ -383,12 +386,14 @@ def main():
             # Decision Logic: Send VICTIM command if Pi is SURE (H/S/U >= 35%)
             now = time.time()
             if (letter in ["H", "S", "U"] and conf >= 35.0 and (now - last_send_time) > 2.5):
+                last_victim = letter
                 print(f"\n🔥 [VICTIM DETECTED & CONFIRMED] Letter={letter} ({conf:.0f}%) | Dist={dist_cm}cm")
                 arduino.send(f"VICTIM:{letter}")
                 last_send_time = now
-                update_oled(f"VICTIM:{letter}", letter, conf, dist_cm)
+                update_oled(f"VICTIM:{letter}", letter, conf, dist_cm, last_victim)
             else:
-                update_oled("RUNNING", letter if conf >= 20 else "NONE", conf, dist_cm)
+                current_letter = letter if conf >= 25 else "NONE"
+                update_oled("RUNNING", current_letter, conf, dist_cm, last_victim)
 
             time.sleep(0.02)
 

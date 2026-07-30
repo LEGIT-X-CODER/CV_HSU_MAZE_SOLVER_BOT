@@ -1,5 +1,5 @@
 // ============================================================
-//  RESCUE MAZE BOT - ARDUINO UNO FIRMWARE (MPU6500 EDITION)
+//  RESCUE MAZE BOT - ARDUINO UNO FIRMWARE (MPU6500 FAST EDITION)
 //
 //  HARDWARE:
 //    - ToF Sensors: Left=D7, Front=D2, Right=D4
@@ -8,16 +8,12 @@
 //    - TCS3200 Color: S0=A1, S1=A2, S2=D12, S3=D11, OUT=D13
 //    - Buzzer=D3, Tile LED=A0, Victim LED=A3, Servo=D8
 //
-//  NAVIGATION & VICTIM WORKFLOW:
-//    1. Front obstacle stop threshold: 12 cm.
-//    2. Open path threshold: 35 cm.
-//    3. Relative Yaw Reset: Before turning, reset yaw to 0.0.
-//    4. Blue Tile: Stop 2.5s + Blink LED. 4.0s cooldown buffer.
-//    5. Black Tile: Immediate 1.0s reverse with buzzer + 90° turn.
-//    6. Asynchronous Victim Buffer: Pi detects H/S/U while driving.
-//       Arduino buffers pending victim and drops kits upon reaching
-//       the wall before turning, then resets pending victim to none!
-//    7. Diagnostic Suite: Triggered by command 'T' from Pi/Serial.
+//  OPTIMIZATIONS:
+//    - Fast 6ms pulseIn timeout & 100ms throttled color reads
+//      so loop runs at full speed without freezing motors!
+//    - Continuous 100ms D:XX distance streaming to Pi.
+//    - Live SSH terminal navigation progress logs every 300ms.
+//    - Immediate 12cm wall stop & pending victim drop before turn.
 // ============================================================
 
 #include <Wire.h>
@@ -47,8 +43,8 @@
 #define MPU_ADDR     0x68
 
 // ---- SPEED & NAVIGATION TUNING PARAMETERS -------------------
-int FORWARD_SPEED = 230;   // Driving speed (0-255)
-int TURN_SPEED    = 245;   // Turning speed (0-255)
+int FORWARD_SPEED = 220;   // Driving speed (0-255)
+int TURN_SPEED    = 240;   // Turning speed (0-255)
 
 #define WALL_DIST        12   // cm - Stop at wall
 #define OPEN_PATH_DIST   35   // cm - Minimum needed for open path
@@ -70,8 +66,10 @@ bool rightOK = false;
 // MPU6500 Gyro & Yaw Variables
 float gyroZ_offset  = 0.0;
 float yaw           = 0.0;
-unsigned long previousTime = 0;
-unsigned long lastDistSend  = 0;
+unsigned long previousTime   = 0;
+unsigned long lastDistSend   = 0;
+unsigned long lastNavPrint   = 0;
+unsigned long lastColorCheck = 0;
 
 // Asynchronous Victim Buffer State
 char pendingVictim  = ' ';   // 'H', 'S', 'U', or ' '
@@ -127,7 +125,7 @@ void setup() {
   delay(500);
 
   Serial.println(F("\n=============================================="));
-  Serial.println(F("   RESCUE MAZE BOT - MPU6500 EDITION"));
+  Serial.println(F("   RESCUE MAZE BOT - MPU6500 FAST EDITION"));
   Serial.println(F("=============================================="));
 
   // Initialize ToF & MPU6500 Gyro
@@ -147,75 +145,79 @@ void setup() {
 //  MAIN NAVIGATION LOOP
 // =============================================================
 void loop() {
-  // ---- Always check for Pi commands (NON-BLOCKING) ----
+  // 1. Check for incoming Pi commands (NON-BLOCKING)
   checkPiCommand();
 
-  // ---- Update MPU6500 Yaw Angle continuously ----
+  // 2. Update MPU6500 Yaw Angle continuously
   updateYaw();
 
-  // ---- Read ToF Distances & Send to Pi ----
+  // 3. Read ToF Distances & Stream D:XX to Pi every 100ms
   readDistances();
   sendDistanceToPi();
 
-  // ---- FLOOR COLOR CHECK 1: BLACK TILE (Hazard) ----
-  // Immediately reverse for 1 sec with buzzer, then turn 90°
-  if (isBlackTile()) {
-    Serial.println(F("[HAZARD] BLACK TILE! Immediate 1s Reverse + Buzz"));
-    
-    // Direct Reverse for 1s with Buzzer ON
-    tone(BUZZER, 2000);
-    analogWrite(LEFT_FWD, 0);  analogWrite(LEFT_REV, FORWARD_SPEED);
-    analogWrite(RIGHT_FWD, 0); analogWrite(RIGHT_REV, FORWARD_SPEED);
-    
-    unsigned long revStart = millis();
-    while (millis() - revStart < BLACK_REV_MS) {
-      updateYaw();
-      delay(10);
-    }
-    noTone(BUZZER);
-    stopMotors();
+  // 4. FLOOR COLOR CHECK (Throttled every 100ms to avoid motor delay)
+  if (millis() - lastColorCheck >= 100) {
+    lastColorCheck = millis();
 
-    // Re-read side distances and turn 90° toward open side
-    readDistances();
-    if (distL >= OPEN_PATH_DIST) {
-      turnDegrees(+90.0);
-    } else if (distR >= OPEN_PATH_DIST) {
-      turnDegrees(-90.0);
-    } else {
-      turnDegrees(+90.0);
+    // Check Black Tile (Hazard)
+    if (isBlackTile()) {
+      Serial.println(F("⚠️ [HAZARD] BLACK TILE! Immediate 1s Reverse + Buzz"));
+      stopMotors();
+      
+      // Direct Reverse for 1s with Buzzer ON
+      tone(BUZZER, 2000);
+      analogWrite(LEFT_FWD, 0);  analogWrite(LEFT_REV, FORWARD_SPEED);
+      analogWrite(RIGHT_FWD, 0); analogWrite(RIGHT_REV, FORWARD_SPEED);
+      
+      unsigned long revStart = millis();
+      while (millis() - revStart < BLACK_REV_MS) {
+        updateYaw();
+        delay(10);
+      }
+      noTone(BUZZER);
+      stopMotors();
+
+      // Turn 90° toward open side
+      readDistances();
+      if (distL >= OPEN_PATH_DIST) {
+        turnDegrees(+90.0);
+      } else if (distR >= OPEN_PATH_DIST) {
+        turnDegrees(-90.0);
+      } else {
+        turnDegrees(+90.0);
+      }
+      return;
     }
-    return;
+
+    // Check Blue Tile (Puddle Checkpoint)
+    if (isBlueTile() && millis() > blueCooldownUntil) {
+      Serial.println(F("💧 [TILE] BLUE PUDDLE -> 2.5s Stop + Blink"));
+      stopMotors();
+      blinkLED(BLUE_PAUSE_MS);
+      blueCooldownUntil = millis() + BLUE_COOLDOWN_MS;
+      return;
+    }
   }
 
-  // ---- FLOOR COLOR CHECK 2: BLUE TILE (Puddle Checkpoint) ----
-  // Stop for 2.5s while blinking LED. Uses 4.0s cooldown buffer.
-  if (isBlueTile() && millis() > blueCooldownUntil) {
-    Serial.println(F("[TILE] BLUE PUDDLE -> 2.5s Stop + Blink"));
-    stopMotors();
-    blinkLED(BLUE_PAUSE_MS);
-    blueCooldownUntil = millis() + BLUE_COOLDOWN_MS;
-    return;
-  }
-
-  // ---- WALL AHEAD CHECK (distF <= 12 cm) ----
+  // 5. WALL AHEAD CHECK (distF <= 12 cm) -> IMMEDIATE STOP & TURN
   if (distF > 0 && distF <= WALL_DIST) {
-    stopMotors();
-    delay(100);
+    stopMotors(); // Halt motors instantly!
+    delay(50);
 
     // Re-read accurate distances while stopped
     readDistances();
     sendDistanceToPi();
 
-    Serial.print(F("[WALL REACHED] Front=")); Serial.print(distF);
-    Serial.print(F("cm | L=")); Serial.print(distL);
-    Serial.print(F("cm | R=")); Serial.print(distR); Serial.println(F("cm"));
+    Serial.print(F("🛑 [WALL REACHED] Front=")); Serial.print(distF);
+    Serial.print(F("cm | Left=")); Serial.print(distL);
+    Serial.print(F("cm | Right=")); Serial.print(distR); Serial.println(F("cm"));
 
-    // ── STEP 1: Handle Pending Victim BEFORE Turning ─────────────
+    // ── STEP A: Handle Pending Victim BEFORE Turning ─────────────
     if (pendingVictim != ' ') {
       handlePendingVictimAtWall();
     }
 
-    // ── STEP 2: SLRB Turn Decision (Minimum 35 cm for open) ─────
+    // ── STEP B: SLRB Turn Decision (Minimum 35 cm for open) ─────
     bool leftOpen  = (distL >= OPEN_PATH_DIST);
     bool rightOpen = (distR >= OPEN_PATH_DIST);
 
@@ -243,7 +245,7 @@ void loop() {
     return;
   }
 
-  // ---- DRIVE FORWARD WITH GYRO STRAIGHT-LINE CORRECTION ----
+  // 6. DRIVE FORWARD WITH GYRO STRAIGHT-LINE CORRECTION
   float angleError = yaw; // Yaw is reset to 0.0 after every turn
   int gyroSteer = constrain(angleError * 5.0, -45, 45);
 
@@ -262,7 +264,23 @@ void loop() {
   analogWrite(LEFT_REV,  0);
   analogWrite(RIGHT_FWD, constrain(FORWARD_SPEED - steer, 0, 255));
   analogWrite(RIGHT_REV, 0);
-  delay(10);
+
+  // Live Navigation Console Log every 300ms
+  if (millis() - lastNavPrint >= 300) {
+    Serial.print(F("🚗 [DRIVE] Front: ")); Serial.print(distF);
+    Serial.print(F("cm | L: ")); Serial.print(distL);
+    Serial.print(F("cm | R: ")); Serial.print(distR);
+    Serial.print(F("cm | Yaw: ")); Serial.print(yaw, 1);
+    if (pendingVictim != ' ') {
+      Serial.print(F("° | Victim: ")); Serial.print(pendingVictim);
+    } else {
+      Serial.print(F("° | Victim: None"));
+    }
+    Serial.println();
+    lastNavPrint = millis();
+  }
+
+  delay(5);
 }
 
 
@@ -321,16 +339,16 @@ void turnDegrees(float targetAngle) {
   stopMotors();
   delay(50);
 
-  // Take the yaw value to 0 and turn with respect to it
+  // Reset yaw value to 0.0 and turn relative to 0
   yaw = 0.0;
   previousTime = micros();
 
-  Serial.print(F("[TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
+  Serial.print(F("🔄 [TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
 
   unsigned long turnStart = millis();
   unsigned long timeout = 2500; // 2.5s safety limit
 
-  float targetMag = abs(targetAngle) - 3.5; // 3.5° lead-in for motor inertia stop
+  float targetMag = abs(targetAngle) - 3.5; // 3.5° lead-in for inertia stop
 
   while (abs(yaw) < targetMag && (millis() - turnStart < timeout)) {
     updateYaw();
@@ -352,7 +370,7 @@ void turnDegrees(float targetAngle) {
   // Reset yaw to 0.0 for straight line driving
   yaw = 0.0;
   previousTime = micros();
-  Serial.print(F("[TURN] Complete! Reset Yaw to 0.0°\n"));
+  Serial.print(F("✅ [TURN] Complete! Reset Yaw to 0.0°\n"));
 }
 
 
@@ -522,10 +540,10 @@ void waitForStart() {
 
 
 // =============================================================
-//  SEND FRONT DISTANCE TO PI
+//  SEND FRONT DISTANCE TO PI (Every 100ms)
 // =============================================================
 void sendDistanceToPi() {
-  if (millis() - lastDistSend >= 200) {
+  if (millis() - lastDistSend >= 100) {
     Serial.print(F("D:")); Serial.println(distF);
     lastDistSend = millis();
   }
@@ -545,8 +563,8 @@ void initToFSensors() {
   digitalWrite(XSHUT_LEFT, HIGH); delay(30);
   if (tofLeft.init()) {
     tofLeft.setAddress(0x30);
-    tofLeft.setTimeout(200);
-    tofLeft.startContinuous(50);
+    tofLeft.setTimeout(100);
+    tofLeft.startContinuous(30);
     leftOK = true;
     Serial.println(F("  Left  ToF OK (0x30)"));
   } else {
@@ -557,8 +575,8 @@ void initToFSensors() {
   digitalWrite(XSHUT_FRONT, HIGH); delay(30);
   if (tofFront.init()) {
     tofFront.setAddress(0x31);
-    tofFront.setTimeout(200);
-    tofFront.startContinuous(50);
+    tofFront.setTimeout(100);
+    tofFront.startContinuous(30);
     frontOK = true;
     Serial.println(F("  Front ToF OK (0x31)"));
   } else {
@@ -569,8 +587,8 @@ void initToFSensors() {
   digitalWrite(XSHUT_RIGHT, HIGH); delay(30);
   if (tofRight.init()) {
     tofRight.setAddress(0x32);
-    tofRight.setTimeout(200);
-    tofRight.startContinuous(50);
+    tofRight.setTimeout(100);
+    tofRight.startContinuous(30);
     rightOK = true;
     Serial.println(F("  Right ToF OK (0x32)"));
   } else {
@@ -606,12 +624,12 @@ void readDistances() {
 
 
 // =============================================================
-//  TCS3200 COLOR SENSOR
+//  TCS3200 COLOR SENSOR (Fast 6ms pulseIn timeout)
 // =============================================================
 int readColorPulse(bool s2, bool s3) {
   digitalWrite(TCS_S2, s2 ? HIGH : LOW);
   digitalWrite(TCS_S3, s3 ? HIGH : LOW);
-  return (int)pulseIn(TCS_OUT, LOW, 25000);
+  return (int)pulseIn(TCS_OUT, LOW, 6000); // Fast 6ms timeout
 }
 
 bool isBlackTile() {
