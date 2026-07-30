@@ -353,11 +353,23 @@ void turnDegrees(float targetAngle) {
   Serial.print(F("🔄 [TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
 
   unsigned long turnStart = millis();
-  unsigned long timeout   = 800; // 800ms MAX safety limit (prevents endless spinning!)
-  int turnPwm             = 190; // Smooth, controlled turn speed (0-255)
+  unsigned long timeout   = 900; // 900ms MAX safety limit
+  int turnPwm             = 165; // Controlled turn speed (prevents brown-out current spike!)
 
-  float targetMag = abs(targetAngle) - 5.0; // 5° lead-in for inertia stop
+  float targetMag = abs(targetAngle) - 4.0; // 4° lead-in for inertia stop
   unsigned long lastTurnLog = 0;
+
+  // ── SOFT START MOTOR RAMP-UP (Prevents Power Dip Brown-Out Reset) ──
+  for (int speed = 70; speed <= turnPwm; speed += 30) {
+    if (targetAngle > 0) {
+      analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, speed);
+      analogWrite(RIGHT_FWD, speed);    analogWrite(RIGHT_REV, 0);
+    } else {
+      analogWrite(LEFT_FWD, speed);     analogWrite(LEFT_REV, 0);
+      analogWrite(RIGHT_FWD, 0);        analogWrite(RIGHT_REV, speed);
+    }
+    delay(10);
+  }
 
   while (millis() - turnStart < timeout) {
     // Check for Pi STOP command during turn
@@ -376,7 +388,7 @@ void turnDegrees(float targetAngle) {
       break;
     }
 
-    // Apply motor spin
+    // Apply steady turn speed
     if (targetAngle > 0) {
       // Spin Left (+90°)
       analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, turnPwm);
