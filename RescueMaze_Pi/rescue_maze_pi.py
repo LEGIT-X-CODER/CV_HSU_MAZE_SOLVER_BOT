@@ -261,6 +261,41 @@ def update_oled(state_text, letter, conf, dist_cm):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  SSH KEYBOARD CLI THREAD
+# ═══════════════════════════════════════════════════════════════
+def terminal_cli_thread(arduino, state_dict):
+    print("\n" + "="*55)
+    print(" ⌨️  SSH KEYBOARD COMMAND INTERFACE ACTIVE")
+    print("  • Type 'T' + Enter   ──► Trigger Full Arduino Hardware Diagnostic")
+    print("  • Type 'START'       ──► Start Maze Solving")
+    print("  • Type 'STOP'        ──► Stop Maze Solving")
+    print("="*55 + "\n")
+
+    while True:
+        try:
+            cmd = input().strip()
+            if not cmd:
+                continue
+            cmd_u = cmd.upper()
+            if cmd_u in ['T', 'TEST']:
+                print("\n\033[96m[Pi → Uno]\033[0m Sending Hardware Diagnostic Trigger 'T'...")
+                arduino.send("T")
+            elif cmd_u == 'START':
+                print("\n\033[92m[Pi → Uno]\033[0m Sending START...")
+                state_dict['running'] = True
+                arduino.send("START")
+            elif cmd_u == 'STOP':
+                print("\n\033[93m[Pi → Uno]\033[0m Sending STOP...")
+                state_dict['running'] = False
+                arduino.send("STOP")
+            else:
+                print(f"\n\033[96m[Pi → Uno]\033[0m Sending command: {cmd}")
+                arduino.send(cmd)
+        except Exception:
+            break
+
+
+# ═══════════════════════════════════════════════════════════════
 #  MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════════
 def main():
