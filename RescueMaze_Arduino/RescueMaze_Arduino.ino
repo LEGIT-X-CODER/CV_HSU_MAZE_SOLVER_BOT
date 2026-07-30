@@ -43,7 +43,7 @@
 #define MPU_ADDR     0x68
 
 // ---- SPEED & NAVIGATION TUNING PARAMETERS -------------------
-int FORWARD_SPEED = 220;   // Driving speed (0-255)
+int FORWARD_SPEED = 170;   // Driving speed (0-255)
 int TURN_SPEED    = 240;   // Turning speed (0-255)
 
 #define WALL_DIST        12   // cm - Stop at wall
@@ -52,7 +52,7 @@ int TURN_SPEED    = 240;   // Turning speed (0-255)
 
 const unsigned long BLUE_PAUSE_MS    = 2500; // 2.5s blue tile pause
 const unsigned long BLUE_COOLDOWN_MS = 4000; // 4.0s buffer before re-detecting blue
-const unsigned long BLACK_REV_MS     = 1000; // 1.0s direct reverse on black
+const unsigned long BLACK_REV_MS     = 100;  // 0.1s quick reverse on black
 
 // ---- OBJECTS ------------------------------------------------
 VL53L0X tofLeft, tofFront, tofRight;
