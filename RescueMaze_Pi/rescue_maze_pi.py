@@ -293,6 +293,9 @@ def main():
     # Initial OLED State
     update_oled("READY", "NONE", 0, 999)
 
+    state_dict = {'running': False}
+    threading.Thread(target=terminal_cli_thread, args=(arduino, state_dict), daemon=True).start()
+
     maze_running = False
     last_touch_state = False
     last_send_time = 0
@@ -307,8 +310,8 @@ def main():
                 touched = (GPIO.input(TOUCH_PIN) == GPIO.HIGH)
 
             if touched and not last_touch_state:
-                maze_running = not maze_running
-                if maze_running:
+                state_dict['running'] = not state_dict['running']
+                if state_dict['running']:
                     print("\n[TOUCH EVENT] TTP223 Pressed ──► STARTING MAZE!")
                     arduino.send("START")
                     update_oled("RUNNING", "NONE", 0, 999)
@@ -320,7 +323,7 @@ def main():
 
             last_touch_state = touched
 
-            if not maze_running:
+            if not state_dict['running']:
                 update_oled("TOUCH START", "NONE", 0, 999)
                 time.sleep(0.1)
                 continue
