@@ -143,20 +143,39 @@ void setup() {
   Wire.endTransmission(true);
 
   Serial.println(F("\n=============================================="));
-  Serial.println(F("   RESCUE MAZE BOT - FOCUS EDITION READY"));
+  Serial.println(F("   RESCUE MAZE BOT - FOCUS EDITION (5s BOOT)"));
   Serial.println(F("=============================================="));
 
-  // Quick 1.5s Hardware Setup
+  // ── 5-SECOND SENSOR WARMUP & GYRO CALIBRATION COUNTDOWN ──
+  Serial.println(F("⏳ [5/5] Initializing ToF Distance Sensors..."));
+  tone(BUZZER, 1000, 100); digitalWrite(TILE_LED, HIGH); delay(150); digitalWrite(TILE_LED, LOW);
   initToFSensors();
-  Serial.println(F("Quick 1.5s Gyro Calibration... Keep Still!"));
-  calibrateGyroFast();
+  delay(750);
+
+  Serial.println(F("⏳ [4/5] Calibrating MPU6500 Gyro... KEEP ROBOT STILL!"));
+  tone(BUZZER, 1200, 100); digitalWrite(TILE_LED, HIGH); delay(150); digitalWrite(TILE_LED, LOW);
+  calibrateGyroFast(); // 1.5-second gyro calibration
   previousTime = micros();
 
-  beep(100); delay(50); beep(100);
-  Serial.println(F("⚡ [READY] Waiting for Pi 'START' command...\n"));
-  
-  // Wait for Pi START command to avoid spinning on power-up!
-  waitForStart();
+  Serial.println(F("⏳ [2/5] Initializing TCS3200 Color & Dispenser Servo..."));
+  tone(BUZZER, 1400, 100); digitalWrite(TILE_LED, HIGH); delay(150); digitalWrite(TILE_LED, LOW);
+  servoWrite(0);
+  delay(750);
+
+  Serial.println(F("⏳ [1/5] Hardware Check Complete! Preparing to launch..."));
+  tone(BUZZER, 1600, 100); digitalWrite(TILE_LED, HIGH); delay(150); digitalWrite(TILE_LED, LOW);
+  delay(750);
+
+  // ── "BEEP-BEEP-GO!" LAUNCH SOUND ──
+  Serial.println(F("🚀 [0/5] 3-2-1 GO! Bot active & navigating!\n"));
+  tone(BUZZER, 1800, 120); digitalWrite(TILE_LED, HIGH); delay(180); digitalWrite(TILE_LED, LOW);
+  tone(BUZZER, 2200, 120); digitalWrite(TILE_LED, HIGH); delay(180); digitalWrite(TILE_LED, LOW);
+  tone(BUZZER, 2800, 450); digitalWrite(TILE_LED, HIGH); delay(500); digitalWrite(TILE_LED, LOW);
+
+  mazeStarted = true;
+  stopRequested = false;
+  yaw = 0.0;
+  previousTime = micros();
 }
 
 
