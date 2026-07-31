@@ -3,6 +3,7 @@
 ============================================================
   MASTER ROBOT HARDWARE DIAGNOSTIC TEST SUITE
   Interactive CLI Menu via Pi SSH Terminal
+  (100% Matched with ArduinoTestAll.ino & RescueMaze_Arduino.ino)
 
   TESTS AVAILABLE:
     [1] Motor Test (Forward, Reverse, Left, Right, Stop)
@@ -99,7 +100,7 @@ class TestController:
             try:
                 self.ser.write((cmd + "\r\n").encode())
                 self.ser.flush()
-                print(f"\n{YELLOW}[Pi → Uno]{RESET} Sent: {BOLD}{cmd}{RESET}")
+                print(f"\n{YELLOW}[Pi → Uno]{RESET} Sent Command: {BOLD}{cmd}{RESET}")
             except Exception as e:
                 print(f"{RED}[Serial Error]{RESET} {e}")
         else:
@@ -110,16 +111,16 @@ def print_menu():
     print(f"\n{BOLD}{'='*60}{RESET}")
     print(f"{BOLD}   🤖 RESCUE MAZE BOT - MASTER HARDWARE DIAGNOSTIC SUITE{RESET}")
     print(f"{BOLD}{'='*60}{RESET}")
-    print(f"  {GREEN}[1]{RESET}  Motor Test (Fwd, Rev, Left, Right, Stop)")
+    print(f"  {GREEN}[1]{RESET}  Motor Test (Forward, Reverse, Left, Right, Stop)")
     print(f"  {GREEN}[2]{RESET}  ToF Distance Sensors Test (Left, Front, Right)")
     print(f"  {GREEN}[3]{RESET}  Color Sensor Test (TCS3200 R,G,B & Floor Detect)")
-    print(f"  {GREEN}[4]{RESET}  MPU6500 Gyro Test (Read Z-Rate & Yaw Angle)")
+    print(f"  {GREEN}[4]{RESET}  MPU6500 Gyro Test (Read Z-Rate & Live Yaw Angle)")
     print(f"  {GREEN}[5]{RESET}  Gyro Turning Test (+90° Left, -90° Right, 180° U-Turn)")
     print(f"  {GREEN}[6]{RESET}  Buzzer & Blue LED Test")
     print(f"  {GREEN}[7]{RESET}  Servo Med-Kit Dispenser Test (138° Push -> 0° Pull)")
     print(f"  {GREEN}[8]{RESET}  Victim Reaction Test (H = 2 kits, S = 1 kit, U = 0 kits)")
     print(f"  {GREEN}[9]{RESET}  TTP223 Touch Sensor Test (GPIO 17 on Pi)")
-    print(f"  {GREEN}[10]{RESET} Auto Run All Hardware Diagnostics")
+    print(f"  {GREEN}[10]{RESET} Auto Run All Hardware Diagnostics Sequentially")
     print(f"  {RED}[Q]{RESET}  Exit")
     print(f"{'─'*60}")
 
@@ -160,58 +161,47 @@ def main():
 
         elif choice == '1':
             print(f"\n{CYAN}[1] MOTOR TEST{RESET}")
-            print("a: Forward 1s  |  b: Reverse 1s  |  c: Spin Left 1s  |  d: Spin Right 1s  |  s: Stop")
-            sub = input("Select motor sub-test (a/b/c/d/s): ").strip().lower()
-            cmds = {'a': 'TEST_MOTOR_FWD', 'b': 'TEST_MOTOR_REV', 'c': 'TEST_MOTOR_LEFT', 'd': 'TEST_MOTOR_RIGHT', 's': 'TEST_MOTOR_STOP'}
-            if sub in cmds:
-                ctrl.send(cmds[sub])
-            else:
-                print(f"{RED}Invalid sub-option{RESET}")
+            ctrl.send("1")
+            time.sleep(6.0)
 
         elif choice == '2':
             print(f"\n{CYAN}[2] TOF DISTANCE SENSORS TEST{RESET}")
-            ctrl.send("TEST_TOF")
-            time.sleep(3.0)
+            ctrl.send("2")
+            time.sleep(5.5)
 
         elif choice == '3':
             print(f"\n{CYAN}[3] TCS3200 COLOR SENSOR TEST{RESET}")
-            ctrl.send("TEST_COLOR")
-            time.sleep(3.0)
+            ctrl.send("3")
+            time.sleep(6.0)
 
         elif choice == '4':
             print(f"\n{CYAN}[4] MPU GYRO LIVE REALTIME ANGLE TEST (10 Seconds Stream){RESET}")
             print(f"{YELLOW}--> Rotate the robot by hand to see live integrated Yaw angle update!{RESET}")
-            ctrl.send("STREAM_MPU")
-            time.sleep(10.5)
+            ctrl.send("4")
+            time.sleep(12.0)
 
         elif choice == '5':
             print(f"\n{CYAN}[5] GYRO TURNING TEST{RESET}")
-            print("l: Left (+90°)  |  r: Right (-90°)  |  u: U-Turn (180°)")
-            sub = input("Select turn (l/r/u): ").strip().lower()
-            turn_map = {'l': 'TURN_LEFT', 'r': 'TURN_RIGHT', 'u': 'TURN_UTURN'}
-            if sub in turn_map:
-                ctrl.send(turn_map[sub])
-            else:
-                print(f"{RED}Invalid turn option{RESET}")
-            time.sleep(3.0)
+            ctrl.send("5")
+            time.sleep(5.0)
 
         elif choice == '6':
-            print(f"\n{CYAN}[6] BUZZER & LED TEST{RESET}")
-            ctrl.send("TEST_BUZZER_LED")
+            print(f"\n{CYAN}[6] BUZZER & BLUE LED TEST{RESET}")
+            ctrl.send("6")
             time.sleep(2.0)
 
         elif choice == '7':
             print(f"\n{CYAN}[7] SERVO MED-KIT DISPENSER TEST{RESET}")
-            ctrl.send("TEST_SERVO")
-            time.sleep(3.0)
+            ctrl.send("7")
+            time.sleep(4.0)
 
         elif choice == '8':
             print(f"\n{CYAN}[8] VICTIM REACTION TEST{RESET}")
-            sub = input("Select Victim Type (h = Harmed / s = Stable / u = Unharmed): ").strip().upper()
+            sub = input("Select Victim Type (H = 2 kits / S = 1 kit / U = 0 kits): ").strip().upper()
             if sub in ['H', 'S', 'U']:
                 ctrl.send(f"VICTIM:{sub}")
             else:
-                print(f"{RED}Invalid victim type{RESET}")
+                ctrl.send("8")
             time.sleep(3.0)
 
         elif choice == '9':
@@ -219,11 +209,8 @@ def main():
 
         elif choice == '10':
             print(f"\n{BOLD}{CYAN}=== STARTING AUTOMATED FULL SYSTEM HARDWARE DIAGNOSTIC ==={RESET}")
-            ctrl.send("TEST_BUZZER_LED"); time.sleep(2.0)
-            ctrl.send("TEST_TOF"); time.sleep(2.0)
-            ctrl.send("TEST_COLOR"); time.sleep(2.0)
-            ctrl.send("TEST_MPU"); time.sleep(2.0)
-            ctrl.send("TEST_SERVO"); time.sleep(3.0)
+            ctrl.send("10")
+            time.sleep(18.0)
             test_touch_sensor()
             print(f"\n{GREEN}{BOLD}[DIAGNOSTIC COMPLETE]{RESET}")
 
