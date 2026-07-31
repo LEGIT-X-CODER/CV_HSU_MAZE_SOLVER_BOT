@@ -1,16 +1,16 @@
 // ============================================================
 //  ARDUINO ALL-IN-ONE INTERACTIVE TEST SKETCH
 //  
-//  SERIAL COMMANDS (Open Serial Monitor at 115200 baud):
-//    '1' or 'm' - Test Motors (Forward, Reverse, Spins + Indications)
-//    '2' or 't' - Test ToF Distance Sensors (Left, Front, Right)
-//    '3' or 'c' - Test TCS3200 Color Sensor (R, G, B & Tile Detection)
-//    '4' or 'i' - Test MPU6500 IMU Angle (Live Yaw Angle in DEGREES)
-//    '5' or 'z' - Test Turning (Left +90°, Right -90°, -180° U-Turn)
-//    '6' or 'b' - Test Buzzer & Blue LED
-//    '7' or 's' - Test Med-Kit Dispenser Servo (Pin 8 Sweep & Drop)
-//    '8' or 'v' - Test Victim Reaction (H = 2 kits, S = 1 kit, U = 0 kits)
-//    '10' or 'a'- Run All Hardware Diagnostics Sequentially
+//  SERIAL COMMANDS (Matches full_robot_test.py on Pi):
+//    [1] Motor Test: '1', 'm', 'TEST_MOTOR_FWD', 'TEST_MOTOR_REV', 'TEST_MOTOR_LEFT', 'TEST_MOTOR_RIGHT', 'TEST_MOTOR_STOP'
+//    [2] ToF Sensor Test: '2', 't', 'TEST_TOF'
+//    [3] Color Sensor Test: '3', 'c', 'TEST_COLOR'
+//    [4] MPU6500 Gyro Test: '4', 'i', 'STREAM_MPU', 'TEST_MPU'
+//    [5] Turning Test: '5', 'z', 'TURN_LEFT', 'TURN_RIGHT', 'TURN_UTURN'
+//    [6] Buzzer & LED Test: '6', 'b', 'l', 'TEST_BUZZER_LED'
+//    [7] Servo Dispenser Test: '7', 's', 'TEST_SERVO', 's138', 's0'
+//    [8] Victim Reaction Test: '8', 'v', 'VICTIM:H', 'VICTIM:S', 'VICTIM:U'
+//    [10] Automated System Test: '10', 'a', 'T', 'TEST_ALL'
 //
 //  PIN MAP:
 //    ToF XSHUT: Left=D7, Front=D2, Right=D4 | I2C = A4/A5
@@ -49,7 +49,7 @@
 //  MOTOR SPEED CONTROLS (Change these values from 0 to 255)
 // =============================================================
 int FORWARD_SPEED = 200;   // Straight driving motor speed (0-255)
-int TURN_SPEED    = 180;   // Turning motor speed for 90/180 turns (0-255)
+int TURN_SPEED    = 165;   // Turning motor speed for 90/180 turns (0-255)
 
 const int MPU_ADDR = 0x68;
 
@@ -120,7 +120,7 @@ void setup() {
 }
 
 // =============================================================
-//  MAIN LOOP - Serial Command Parser (Matches 1 to 10 options!)
+//  MAIN LOOP - Serial Command Parser (Matches full_robot_test.py!)
 // =============================================================
 void loop() {
   if (Serial.available() > 0) {
@@ -155,24 +155,60 @@ void loop() {
       return;
     }
 
-    // Option Match (1-10 or single character commands)
-    if (cmdUpper == "1" || cmdUpper == "M" || cmdUpper.startsWith("MOTOR") || cmdUpper.startsWith("TEST_MOTOR")) {
+    // Motor Sub-Commands sent by full_robot_test.py Option 1
+    if (cmdUpper == "TEST_MOTOR_FWD") {
+      Serial.println(F("--> Motor FORWARD 1s"));
+      analogWrite(LEFT_FWD, FORWARD_SPEED);  analogWrite(LEFT_REV, 0);
+      analogWrite(RIGHT_FWD, FORWARD_SPEED); analogWrite(RIGHT_REV, 0);
+      delay(1000); stopMotors();
+    } else if (cmdUpper == "TEST_MOTOR_REV") {
+      Serial.println(F("--> Motor REVERSE 1s"));
+      analogWrite(LEFT_FWD, 0);  analogWrite(LEFT_REV, FORWARD_SPEED);
+      analogWrite(RIGHT_FWD, 0); analogWrite(RIGHT_REV, FORWARD_SPEED);
+      delay(1000); stopMotors();
+    } else if (cmdUpper == "TEST_MOTOR_LEFT") {
+      Serial.println(F("--> Motor SPIN LEFT 1s"));
+      analogWrite(LEFT_FWD, 0);          analogWrite(LEFT_REV, TURN_SPEED);
+      analogWrite(RIGHT_FWD, TURN_SPEED); analogWrite(RIGHT_REV, 0);
+      delay(1000); stopMotors();
+    } else if (cmdUpper == "TEST_MOTOR_RIGHT") {
+      Serial.println(F("--> Motor SPIN RIGHT 1s"));
+      analogWrite(LEFT_FWD, TURN_SPEED); analogWrite(LEFT_REV, 0);
+      analogWrite(RIGHT_FWD, 0);         analogWrite(RIGHT_REV, TURN_SPEED);
+      delay(1000); stopMotors();
+    } else if (cmdUpper == "TEST_MOTOR_STOP") {
+      Serial.println(F("--> Motor STOP"));
+      stopMotors();
+    }
+    // Turn Sub-Commands sent by full_robot_test.py Option 5
+    else if (cmdUpper == "TURN_LEFT") {
+      Serial.println(F("--> Turning LEFT +90°..."));
+      executeTurn(+90.0);
+    } else if (cmdUpper == "TURN_RIGHT") {
+      Serial.println(F("--> Turning RIGHT -90°..."));
+      executeTurn(-90.0);
+    } else if (cmdUpper == "TURN_UTURN") {
+      Serial.println(F("--> Turning U-TURN -180°..."));
+      executeTurn(-180.0);
+    }
+    // General Option Matches (1-10 or single character commands)
+    else if (cmdUpper == "1" || cmdUpper == "M" || cmdUpper.startsWith("TEST_MOTOR")) {
       testMotors();
-    } else if (cmdUpper == "2" || cmdUpper == "T" || cmdUpper == "TOF" || cmdUpper.startsWith("TEST_TOF")) {
+    } else if (cmdUpper == "2" || cmdUpper == "T" || cmdUpper == "TEST_TOF") {
       testToF();
-    } else if (cmdUpper == "3" || cmdUpper == "C" || cmdUpper == "COLOR" || cmdUpper.startsWith("TEST_COLOR")) {
+    } else if (cmdUpper == "3" || cmdUpper == "C" || cmdUpper == "TEST_COLOR") {
       testColorSensor();
-    } else if (cmdUpper == "4" || cmdUpper == "I" || cmdUpper == "IMU" || cmdUpper == "MPU" || cmdUpper.startsWith("STREAM") || cmdUpper.startsWith("TEST_MPU")) {
+    } else if (cmdUpper == "4" || cmdUpper == "I" || cmdUpper == "STREAM_MPU" || cmdUpper == "TEST_MPU") {
       testIMUAngle();
-    } else if (cmdUpper == "5" || cmdUpper == "Z" || cmdUpper.startsWith("TURN") || cmdUpper.startsWith("TEST_TURN")) {
+    } else if (cmdUpper == "5" || cmdUpper == "Z" || cmdUpper.startsWith("TURN")) {
       testTurning();
-    } else if (cmdUpper == "6" || cmdUpper == "B" || cmdUpper == "L" || cmdUpper.startsWith("BUZZER") || cmdUpper.startsWith("TEST_BUZZER")) {
+    } else if (cmdUpper == "6" || cmdUpper == "B" || cmdUpper == "L" || cmdUpper == "TEST_BUZZER_LED") {
       testBuzzerLED();
-    } else if (cmdUpper == "7" || cmdUpper == "S" || cmdUpper.startsWith("SERVO") || cmdUpper.startsWith("TEST_SERVO")) {
+    } else if (cmdUpper == "7" || cmdUpper == "S" || cmdUpper == "TEST_SERVO") {
       testServo();
     } else if (cmdUpper == "8" || cmdUpper == "V" || cmdUpper.startsWith("VICTIM")) {
       testVictimReaction('H'); // Default H test
-    } else if (cmdUpper == "10" || cmdUpper == "A" || cmdUpper == "ALL" || cmdUpper.startsWith("TEST_ALL")) {
+    } else if (cmdUpper == "10" || cmdUpper == "A" || cmdUpper == "TEST_ALL") {
       testAll();
     } else if (cmdUpper == "?" || cmdUpper == "H" || cmdUpper == "HELP" || cmdUpper == "MENU") {
       printMenu();
