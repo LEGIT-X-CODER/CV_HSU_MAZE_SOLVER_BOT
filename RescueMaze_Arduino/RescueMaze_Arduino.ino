@@ -1,5 +1,5 @@
 // ============================================================
-//  RESCUE MAZE BOT - ARDUINO UNO FIRMWARE (MPU6500 FAST EDITION)
+//  RESCUE MAZE BOT - ARDUINO UNO FIRMWARE (STEP TRACER EDITION)
 //
 //  HARDWARE:
 //    - ToF Sensors: Left=D7, Front=D2, Right=D4
@@ -8,12 +8,11 @@
 //    - TCS3200 Color: S0=A1, S1=A2, S2=D12, S3=D11, OUT=D13
 //    - Buzzer=D3, Tile LED=A0, Victim LED=A3, Servo=D8
 //
-//  OPTIMIZATIONS:
-//    - Fast 6ms pulseIn timeout & 100ms throttled color reads
-//      so loop runs at full speed without freezing motors!
-//    - Continuous 100ms D:XX distance streaming to Pi.
-//    - Live SSH terminal navigation progress logs every 300ms.
-//    - Immediate 12cm wall stop & pending victim drop before turn.
+//  STEP TRACER & WATCHDOG SYSTEM:
+//    - Wire.setWireTimeout(3000, true) prevents I2C bus lockups.
+//    - Real-time [STEP: xxx] console tracer prints exact function
+//      location so if code freezes, the last printed step pinpoints
+//      the exact line/sensor causing the freeze!
 // ============================================================
 
 #include <Wire.h>
@@ -43,8 +42,8 @@
 #define MPU_ADDR     0x68
 
 // ---- SPEED & NAVIGATION TUNING PARAMETERS -------------------
-int FORWARD_SPEED = 170;   // Driving speed (0-255)
-int TURN_SPEED    = 240;   // Turning speed (0-255)
+int FORWARD_SPEED = 220;   // Driving speed (0-255)
+int TURN_SPEED    = 175;   // Turning speed (0-255)
 
 #define WALL_DIST        12   // cm - Stop at wall
 #define OPEN_PATH_DIST   35   // cm - Minimum needed for open path
@@ -77,6 +76,12 @@ bool mazeStarted    = false;
 volatile bool stopRequested = false;
 unsigned long blueCooldownUntil = 0;
 
+// STEP TRACER VARIABLE
+const char* currentStepName = "STANDBY";
+void setStep(const char* name) {
+  currentStepName = name;
+}
+
 // Function Prototypes
 void stopMotors();
 void activeBrake();
@@ -100,6 +105,10 @@ void flashLED(int times, int onMs);
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+
+  #if defined(WIRE_HAS_TIMEOUT)
+    Wire.setWireTimeout(3000, true); // Auto-reset I2C bus if stuck > 3ms
+  #endif
 
   // Pins Setup
   pinMode(LEFT_FWD,   OUTPUT); pinMode(LEFT_REV,   OUTPUT);
@@ -126,11 +135,14 @@ void setup() {
   delay(500);
 
   Serial.println(F("\n=============================================="));
-  Serial.println(F("   RESCUE MAZE BOT - MPU6500 FAST EDITION"));
+  Serial.println(F("   RESCUE MAZE BOT - STEP TRACER EDITION"));
   Serial.println(F("=============================================="));
 
   // Initialize ToF & MPU6500 Gyro
+  setStep("INIT_TOF");
   initToFSensors();
+
+  setStep("CALIBRATE_GYRO");
   Serial.println(F("Calibrating MPU6500 Gyro... Keep Still!"));
   calibrateGyro();
   previousTime = micros();
@@ -138,6 +150,7 @@ void setup() {
   beep(100); delay(50); beep(100);
   Serial.println(F("[READY] Standby mode. Send 'T' for diagnostics or 'START' to run.\n"));
   
+  setStep("STANDBY");
   waitForStart();
 }
 
@@ -147,6 +160,7 @@ void setup() {
 // =============================================================
 void loop() {
   // 1. Check for incoming Pi commands (NON-BLOCKING)
+  setStep("CHECK_PI_COMMAND");
   checkPiCommand();
   if (stopRequested) {
     waitForStart();
@@ -154,9 +168,11 @@ void loop() {
   }
 
   // 2. Update MPU6500 Yaw Angle continuously
+  setStep("UPDATE_YAW");
   updateYaw();
 
   // 3. Read ToF Distances & Stream D:XX to Pi every 100ms
+  setStep("READ_TOF_DISTANCES");
   readDistances();
   sendDistanceToPi();
 
@@ -165,11 +181,12 @@ void loop() {
     lastColorCheck = millis();
 
     // Check Black Tile (Hazard)
+    setStep("CHECK_BLACK_TILE");
     if (isBlackTile()) {
-      Serial.println(F("⚠️ [HAZARD] BLACK TILE! Immediate 1s Reverse + Buzz"));
+      Serial.println(F("⚠️ [HAZARD] BLACK TILE! Immediate 0.1s Reverse + Buzz"));
       stopMotors();
       
-      // Direct Reverse for 1s with Buzzer ON
+      // Direct Reverse for 0.1s with Buzzer ON
       tone(BUZZER, 2000);
       analogWrite(LEFT_FWD, 0);  analogWrite(LEFT_REV, FORWARD_SPEED);
       analogWrite(RIGHT_FWD, 0); analogWrite(RIGHT_REV, FORWARD_SPEED);
@@ -195,6 +212,7 @@ void loop() {
     }
 
     // Check Blue Tile (Puddle Checkpoint)
+    setStep("CHECK_BLUE_TILE");
     if (isBlueTile() && millis() > blueCooldownUntil) {
       Serial.println(F("💧 [TILE] BLUE PUDDLE -> 2.5s Stop + Blink"));
       stopMotors();
@@ -206,6 +224,7 @@ void loop() {
 
   // 5. WALL AHEAD CHECK (distF <= 12 cm) -> IMMEDIATE STOP & TURN
   if (distF > 0 && distF <= WALL_DIST) {
+    setStep("WALL_DECISION");
     stopMotors(); // Halt motors instantly!
     delay(50);
 
@@ -219,6 +238,7 @@ void loop() {
 
     // ── STEP A: Handle Pending Victim BEFORE Turning ─────────────
     if (pendingVictim != ' ') {
+      setStep("VICTIM_DISPENSE");
       handlePendingVictimAtWall();
     }
 
@@ -226,6 +246,7 @@ void loop() {
     bool leftOpen  = (distL >= OPEN_PATH_DIST);
     bool rightOpen = (distR >= OPEN_PATH_DIST);
 
+    setStep("TURNING");
     if (leftOpen && rightOpen) {
       // Both open (>= 35cm): turn toward the side with more open room
       if (distL >= distR) {
@@ -251,6 +272,7 @@ void loop() {
   }
 
   // 6. DRIVE FORWARD WITH GYRO STRAIGHT-LINE CORRECTION
+  setStep("DRIVING_FORWARD");
   float angleError = yaw; // Yaw is reset to 0.0 after every turn
   int gyroSteer = constrain(angleError * 5.0, -45, 45);
 
@@ -341,26 +363,25 @@ void updateYaw() {
 //  GYRO TURNING LOGIC (Resets Yaw to 0.0 before turn)
 // =============================================================
 void turnDegrees(float targetAngle) {
-  // 1. Complete Standstill & Active Brake before initializing turn
+  setStep("TURN_STANDSTILL_BRAKE");
   activeBrake();
   delay(150);
 
   if (stopRequested) return;
 
-  // 2. Reset Yaw to 0.0 ONLY after robot is at 100% standstill
   yaw = 0.0;
   previousTime = micros();
 
   Serial.print(F("🔄 [TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
 
   unsigned long turnStart = millis();
-  unsigned long timeout   = 1300; // 1.3s safety limit (allows full turn without timing out)
+  unsigned long timeout   = 1300; // 1.3s safety limit
   int turnPwm             = 175;  // Optimal turning PWM
 
-  float leadIn = 5.0; // 5° lead-in to compensate for motor inertia
+  float leadIn = 5.0; // 5° lead-in for inertia stop
   unsigned long lastTurnLog = 0;
 
-  // 3. Soft-Start Motor Ramp-Up (Prevents Power Surge & Voltage Dip)
+  setStep("TURN_RAMP_UP");
   for (int speed = 80; speed <= turnPwm; speed += 25) {
     if (targetAngle > 0) {
       analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, speed);
@@ -372,7 +393,7 @@ void turnDegrees(float targetAngle) {
     delay(12);
   }
 
-  // 4. Main Turning Loop with Explicit Direction-Aware Sign Checks
+  setStep("TURNING_SPIN");
   while (millis() - turnStart < timeout) {
     checkPiCommand();
     if (stopRequested) {
@@ -383,9 +404,6 @@ void turnDegrees(float targetAngle) {
 
     updateYaw();
 
-    // Direction-aware turn completion check:
-    // Left turn  (targetAngle > 0): yaw must reach +85°
-    // Right turn (targetAngle < 0): yaw must reach -85°
     bool turnFinished = false;
     if (targetAngle > 0 && yaw >= (targetAngle - leadIn)) {
       turnFinished = true;
@@ -399,18 +417,14 @@ void turnDegrees(float targetAngle) {
       break;
     }
 
-    // Maintain turn rotation
     if (targetAngle > 0) {
-      // Spin Left (+90°)
       analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, turnPwm);
       analogWrite(RIGHT_FWD, turnPwm);  analogWrite(RIGHT_REV, 0);
     } else {
-      // Spin Right (-90°)
       analogWrite(LEFT_FWD, turnPwm);   analogWrite(LEFT_REV, 0);
       analogWrite(RIGHT_FWD, 0);        analogWrite(RIGHT_REV, turnPwm);
     }
 
-    // Live Turn Degrees Log every 80ms
     if (millis() - lastTurnLog >= 80) {
       Serial.print(F("  [TURNING] Yaw: ")); Serial.print(yaw, 1); Serial.println(F("°"));
       lastTurnLog = millis();
@@ -419,14 +433,14 @@ void turnDegrees(float targetAngle) {
     delay(5);
   }
 
-  // 5. Active Brake to halt turn instantly on exact angle
+  setStep("TURN_BRAKE");
   activeBrake();
   delay(100);
 
-  // 6. Reset Yaw to 0.0 for straight line driving
   yaw = 0.0;
   previousTime = micros();
   Serial.print(F("✅ [TURN COMPLETE] Stop Yaw = 0.0°\n"));
+  setStep("DRIVING_FORWARD");
 }
 
 
@@ -440,28 +454,24 @@ void handlePendingVictimAtWall() {
   stopMotors();
 
   if (pendingVictim == 'H') {
-    // 2 Kits + 3 Beeps + 3 LED Flashes
     beep(200); delay(100); beep(200); delay(100); beep(200);
     dispenseKits(2);
     flashLED(3, 300);
 
   } else if (pendingVictim == 'S') {
-    // 1 Kit + 2 Beeps + 2 LED Flashes
     beep(200); delay(100); beep(200);
     dispenseKits(1);
     flashLED(2, 300);
 
   } else if (pendingVictim == 'U') {
-    // 0 Kits + 1 Beep + 1 LED Flash
     beep(200);
     flashLED(1, 500);
   }
 
-  // Send ACK to Pi and reset pending victim back to none
   Serial.print(F("VICTIM_ACK:"));
   Serial.println(pendingVictim);
   
-  pendingVictim = ' '; // Cleared back to none!
+  pendingVictim = ' ';
   delay(300);
 }
 
@@ -470,12 +480,12 @@ void handlePendingVictimAtWall() {
 //  AUTOMATED DIAGNOSTIC SUITE (Triggered by 'T' command)
 // =============================================================
 void runDiagnosticSuite() {
+  setStep("DIAGNOSTIC_SUITE");
   stopMotors();
   Serial.println(F("\n=============================================="));
   Serial.println(F("   STARTING MASTER HARDWARE DIAGNOSTIC SUITE"));
   Serial.println(F("=============================================="));
 
-  // 1. ToF Sensors Stream (3 seconds)
   Serial.println(F("\n[1/4] Testing ToF Sensors (3s Stream)..."));
   unsigned long tofStart = millis();
   while (millis() - tofStart < 3000) {
@@ -486,18 +496,11 @@ void runDiagnosticSuite() {
     delay(300);
   }
 
-  // 2. LED & Buzzer Diagnostic (1s each)
   Serial.println(F("\n[2/4] Testing LEDs & Buzzer (1s each)..."));
-  Serial.println(F("  --> Tile LED (A0) ON"));
   digitalWrite(TILE_LED, HIGH); delay(1000); digitalWrite(TILE_LED, LOW);
-
-  Serial.println(F("  --> Victim LED (A3) ON"));
   digitalWrite(VICTIM_LED, HIGH); delay(1000); digitalWrite(VICTIM_LED, LOW);
-
-  Serial.println(F("  --> Buzzer (Pin 3) Beep"));
   beep(1000);
 
-  // 3. MPU6500 Gyro Calibration & 5s Live Yaw Stream
   Serial.println(F("\n[3/4] MPU6500 Gyro Calibration & Live Yaw Stream (5s)..."));
   calibrateGyro();
   previousTime = micros();
@@ -508,12 +511,8 @@ void runDiagnosticSuite() {
     delay(150);
   }
 
-  // 4. 90-Degree Turn Tests
   Serial.println(F("\n[4/4] Executing 90-Degree MPU6500 Self-Test Turns..."));
-  Serial.println(F("  --> Left Turn (+90°)"));
   turnDegrees(+90.0); delay(500);
-
-  Serial.println(F("  --> Right Turn (-90°)"));
   turnDegrees(-90.0); delay(500);
 
   Serial.println(F("\n=============================================="));
@@ -521,6 +520,7 @@ void runDiagnosticSuite() {
   Serial.println(F("==============================================\n"));
 
   beep(200); delay(100); beep(200); delay(100); beep(200);
+  setStep("STANDBY");
 }
 
 
@@ -533,7 +533,6 @@ void checkPiCommand() {
     cmd.trim();
     cmd.toUpperCase();
 
-    // Trigger full diagnostic suite if 'T' or 'TEST' is sent
     if (cmd == "T" || cmd.indexOf("TEST") != -1) {
       runDiagnosticSuite();
       return;
@@ -549,10 +548,9 @@ void checkPiCommand() {
       return;
     }
 
-    // Buffer incoming victim signal from Pi
     int idx = cmd.indexOf("VICTIM:");
     if (idx != -1) {
-      char v = cmd.charAt(idx + 7);  // 'H', 'S', or 'U'
+      char v = cmd.charAt(idx + 7);
       if (v == 'H' || v == 'S' || v == 'U') {
         pendingVictim = v;
         Serial.print(F("PI_VICTIM_BUFFERED:")); Serial.println(pendingVictim);
@@ -566,6 +564,7 @@ void checkPiCommand() {
 //  WAIT FOR PI START HANDSHAKE
 // =============================================================
 void waitForStart() {
+  setStep("STANDBY");
   stopMotors();
   mazeStarted = false;
   stopRequested = false;
@@ -595,15 +594,17 @@ void waitForStart() {
     delay(10);
   }
   digitalWrite(TILE_LED, LOW);
+  setStep("DRIVING_FORWARD");
 }
 
 
 // =============================================================
-//  SEND FRONT DISTANCE TO PI (Every 100ms)
+//  SEND FRONT DISTANCE & STEP TRACE TO PI (Every 100ms)
 // =============================================================
 void sendDistanceToPi() {
   if (millis() - lastDistSend >= 100) {
-    Serial.print(F("D:")); Serial.println(distF);
+    Serial.print(F("D:")); Serial.print(distF);
+    Serial.print(F(" | [STEP:")); Serial.print(currentStepName); Serial.println(F("]"));
     lastDistSend = millis();
   }
 }
