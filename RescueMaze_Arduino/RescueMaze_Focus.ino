@@ -83,6 +83,7 @@ unsigned long lastColorCheck = 0;
 
 // Asynchronous Victim & Navigation State
 char pendingVictim   = ' ';   // 'H', 'S', 'U', or ' '
+bool mazeStarted     = false;
 volatile bool stopRequested = false;
 unsigned long blueCooldownUntil = 0;
 
@@ -100,6 +101,7 @@ void turn3Stage(float totalDegrees);
 void turnMicroStep(float targetStepAngle);
 void handlePendingVictimAtWall();
 void processPiSerialCommand();
+void waitForStart();
 void dispenseKits(int count);
 void beep(int ms);
 void blinkLED(unsigned long ms);
@@ -146,12 +148,15 @@ void setup() {
 
   // Quick 1.5s Hardware Setup
   initToFSensors();
-  Serial.println(F("Quick 1.5s Gyro Calibration..."));
+  Serial.println(F("Quick 1.5s Gyro Calibration... Keep Still!"));
   calibrateGyroFast();
   previousTime = micros();
 
   beep(100); delay(50); beep(100);
-  Serial.println(F("⚡ [AUTO-RESUME] Bot active & navigating!\n"));
+  Serial.println(F("⚡ [READY] Waiting for Pi 'START' command...\n"));
+  
+  // Wait for Pi START command to avoid spinning on power-up!
+  waitForStart();
 }
 
 
@@ -162,8 +167,7 @@ void loop() {
   // 1. Process Pi Serial Commands (NON-BLOCKING)
   processPiSerialCommand();
   if (stopRequested) {
-    stopMotors();
-    delay(50);
+    waitForStart();
     return;
   }
 
@@ -181,7 +185,7 @@ void loop() {
   if (millis() - lastColorCheck >= 100) {
     lastColorCheck = millis();
 
-    // Black Hazard Check
+    // Black Hazard Check (Only if color sensor returns valid pulses > 0)
     if (isBlackTile()) {
       Serial.println(F("⚠️ [HAZARD] BLACK TILE! Quick 0.1s Reverse + Buzz"));
       stopMotors();
@@ -214,8 +218,8 @@ void loop() {
     }
   }
 
-  // 4. WALL REACHED CHECK (distF <= 12 cm) -> STOP, DROP KIT & TURN
-  if (distF > 0 && distF <= WALL_DIST) {
+  // 4. WALL REACHED CHECK (distF >= 3 && distF <= 12 cm) -> STOP, DROP KIT & TURN
+  if (distF >= 3 && distF <= WALL_DIST) {
     stopMotors();
     delay(100);
 
@@ -483,10 +487,12 @@ void processPiSerialCommand() {
         if (cmd.indexOf("STOP") != -1 || cmd.indexOf("RESET") != -1) {
           stopMotors();
           stopRequested = true;
+          mazeStarted = false;
           pendingVictim = ' ';
           Serial.println(F("STOP_ACK"));
         } else if (cmd.indexOf("START") != -1) {
           stopRequested = false;
+          mazeStarted = true;
           yaw = 0.0;
           previousTime = micros();
           Serial.println(F("START_ACK"));
@@ -503,6 +509,28 @@ void processPiSerialCommand() {
       serialBuffer[serialBufferIdx++] = c;
     }
   }
+}
+
+// =============================================================
+//  WAIT FOR PI START HANDSHAKE (Prevents Spinning on Bootup)
+// =============================================================
+void waitForStart() {
+  stopMotors();
+  mazeStarted = false;
+  stopRequested = false;
+  pendingVictim = ' ';
+  Serial.println(F("READY"));
+  Serial.println(F("Waiting for Pi 'START' command..."));
+
+  while (!mazeStarted) {
+    processPiSerialCommand();
+    digitalWrite(TILE_LED, (millis() / 500) % 2);
+    delay(10);
+  }
+  digitalWrite(TILE_LED, LOW);
+  yaw = 0.0;
+  previousTime = micros();
+  Serial.println(F("⚡ [START RECEIVED] Bot active & navigating!"));
 }
 
 
@@ -592,12 +620,14 @@ bool isBlackTile() {
   int r = readColorPulse(LOW, LOW);
   int g = readColorPulse(HIGH, HIGH);
   int b = readColorPulse(LOW, HIGH);
+  if (r <= 0 || g <= 0 || b <= 0) return false; // Ignore pulse timeouts/disconnected sensors
   return (r > BLACK_THRESH && g > BLACK_THRESH && b > BLACK_THRESH);
 }
 
 bool isBlueTile() {
   int r = readColorPulse(LOW, LOW);
   int b = readColorPulse(LOW, HIGH);
+  if (r <= 0 || b <= 0) return false;
   return (b < r - 40 && b < 150);
 }
 
