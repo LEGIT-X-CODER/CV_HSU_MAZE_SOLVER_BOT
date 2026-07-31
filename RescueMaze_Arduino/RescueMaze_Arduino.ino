@@ -341,26 +341,27 @@ void updateYaw() {
 //  GYRO TURNING LOGIC (Resets Yaw to 0.0 before turn)
 // =============================================================
 void turnDegrees(float targetAngle) {
-  stopMotors();
-  delay(100);
+  // 1. Complete Standstill & Active Brake before initializing turn
+  activeBrake();
+  delay(150);
 
   if (stopRequested) return;
 
-  // Reset yaw value to 0.0 and turn relative to 0
+  // 2. Reset Yaw to 0.0 ONLY after robot is at 100% standstill
   yaw = 0.0;
   previousTime = micros();
 
   Serial.print(F("🔄 [TURN] Starting MPU6500 Turn to ")); Serial.print(targetAngle); Serial.println(F("°"));
 
   unsigned long turnStart = millis();
-  unsigned long timeout   = 900; // 900ms MAX safety limit
-  int turnPwm             = 165; // Controlled turn speed (prevents brown-out current spike!)
+  unsigned long timeout   = 1300; // 1.3s safety limit (allows full turn without timing out)
+  int turnPwm             = 175;  // Optimal turning PWM
 
-  float targetMag = abs(targetAngle) - 4.0; // 4° lead-in for inertia stop
+  float leadIn = 5.0; // 5° lead-in to compensate for motor inertia
   unsigned long lastTurnLog = 0;
 
-  // ── SOFT START MOTOR RAMP-UP (Prevents Power Dip Brown-Out Reset) ──
-  for (int speed = 70; speed <= turnPwm; speed += 30) {
+  // 3. Soft-Start Motor Ramp-Up (Prevents Power Surge & Voltage Dip)
+  for (int speed = 80; speed <= turnPwm; speed += 25) {
     if (targetAngle > 0) {
       analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, speed);
       analogWrite(RIGHT_FWD, speed);    analogWrite(RIGHT_REV, 0);
@@ -368,11 +369,11 @@ void turnDegrees(float targetAngle) {
       analogWrite(LEFT_FWD, speed);     analogWrite(LEFT_REV, 0);
       analogWrite(RIGHT_FWD, 0);        analogWrite(RIGHT_REV, speed);
     }
-    delay(10);
+    delay(12);
   }
 
+  // 4. Main Turning Loop with Explicit Direction-Aware Sign Checks
   while (millis() - turnStart < timeout) {
-    // Check for Pi STOP command during turn
     checkPiCommand();
     if (stopRequested) {
       Serial.println(F("🛑 [TURN ABORTED] STOP Command Received!"));
@@ -382,13 +383,23 @@ void turnDegrees(float targetAngle) {
 
     updateYaw();
 
-    // Check if target degree reached
-    if (abs(yaw) >= targetMag) {
-      Serial.print(F("🎯 [TURN TARGET REACHED] Yaw = ")); Serial.print(yaw, 1); Serial.println(F("°"));
+    // Direction-aware turn completion check:
+    // Left turn  (targetAngle > 0): yaw must reach +85°
+    // Right turn (targetAngle < 0): yaw must reach -85°
+    bool turnFinished = false;
+    if (targetAngle > 0 && yaw >= (targetAngle - leadIn)) {
+      turnFinished = true;
+    } else if (targetAngle < 0 && yaw <= (targetAngle + leadIn)) {
+      turnFinished = true;
+    }
+
+    if (turnFinished) {
+      Serial.print(F("🎯 [TURN TARGET REACHED] Target: ")); Serial.print(targetAngle, 1);
+      Serial.print(F("° | Actual Yaw: ")); Serial.print(yaw, 1); Serial.println(F("°"));
       break;
     }
 
-    // Apply steady turn speed
+    // Maintain turn rotation
     if (targetAngle > 0) {
       // Spin Left (+90°)
       analogWrite(LEFT_FWD, 0);         analogWrite(LEFT_REV, turnPwm);
@@ -399,8 +410,8 @@ void turnDegrees(float targetAngle) {
       analogWrite(RIGHT_FWD, 0);        analogWrite(RIGHT_REV, turnPwm);
     }
 
-    // Print live turn progress every 100ms
-    if (millis() - lastTurnLog >= 100) {
+    // Live Turn Degrees Log every 80ms
+    if (millis() - lastTurnLog >= 80) {
       Serial.print(F("  [TURNING] Yaw: ")); Serial.print(yaw, 1); Serial.println(F("°"));
       lastTurnLog = millis();
     }
@@ -408,9 +419,11 @@ void turnDegrees(float targetAngle) {
     delay(5);
   }
 
+  // 5. Active Brake to halt turn instantly on exact angle
   activeBrake();
+  delay(100);
 
-  // Reset yaw to 0.0 for straight line driving
+  // 6. Reset Yaw to 0.0 for straight line driving
   yaw = 0.0;
   previousTime = micros();
   Serial.print(F("✅ [TURN COMPLETE] Stop Yaw = 0.0°\n"));
